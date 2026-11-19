@@ -4,6 +4,15 @@ import api, { errMsg } from "../api.js";
 import useMeta from "../meta.js";
 import { batchLabel, currentSemester, startYearOptions, totalSemesters } from "../academic.js";
 
+// A new batch row. When "base" is given (adding another batch) it starts from the previous row
+// with the next degree, because shared classes usually mix degrees of the same branch.
+function newCohort(meta, base) {
+  const degrees = Object.keys(meta.degrees);
+  const degree = base ? degrees[(degrees.indexOf(base.degree) + 1) % degrees.length] : degrees[0];
+  const year = base ? base.batch_start_year : new Date().getFullYear();
+  return { key: Math.random().toString(36).slice(2), batch_start_year: year, degree, section: base?.section || "", semester: currentSemester(year, degree, meta) };
+}
+
 export default function TeacherDashboard() {
   const meta = useMeta();
   const [classes, setClasses] = useState([]);
@@ -13,25 +22,18 @@ export default function TeacherDashboard() {
 
   const load = () => api.get("/classes").then((r) => setClasses(r.data)).catch((e) => setError(errMsg(e))).finally(() => setLoaded(true));
   useEffect(() => { load(); }, []);
+  useEffect(() => { if (meta && !form) setForm({ subject: "", department: "", cohorts: [newCohort(meta)] }); }, [meta]);
 
-  useEffect(() => {
-    if (meta && !form) {
-      const degree = Object.keys(meta.degrees)[0];
-      const year = new Date().getFullYear();
-      setForm({ subject: "", batch_start_year: year, degree, department: "", section: "", semester: currentSemester(year, degree, meta) });
-    }
-  }, [meta]);
-
-  // Group: batch (newest first) -> semester (latest first) -> classes
+  // Group: batch (newest first) -> semester (latest first) -> classes. A shared class appears under each of its batches.
   const groups = useMemo(() => {
     const map = new Map();
-    for (const c of classes) {
-      const key = `${c.batch_start_year}|${c.degree}`;
-      if (!map.has(key)) map.set(key, { key, start: c.batch_start_year, degree: c.degree, label: c.batch_label, sems: new Map(), count: 0 });
+    for (const c of classes) for (const k of c.cohorts) {
+      const key = `${k.batch_start_year}|${k.degree}`;
+      if (!map.has(key)) map.set(key, { key, start: k.batch_start_year, degree: k.degree, label: k.batch_label, sems: new Map(), ids: new Set() });
       const g = map.get(key);
-      g.count++;
-      if (!g.sems.has(c.semester)) g.sems.set(c.semester, []);
-      g.sems.get(c.semester).push(c);
+      g.ids.add(c.id);
+      if (!g.sems.has(k.semester)) g.sems.set(k.semester, []);
+      g.sems.get(k.semester).push({ cls: c, cohort: k });
     }
     return [...map.values()]
       .sort((a, b) => b.start - a.start || a.degree.localeCompare(b.degree))
@@ -40,71 +42,85 @@ export default function TeacherDashboard() {
 
   if (!meta || !form) return <p>Loading…</p>;
 
-  const change = (k) => (e) => {
-    const next = { ...form, [k]: k === "batch_start_year" ? Number(e.target.value) : e.target.value };
-    if (k === "batch_start_year" || k === "degree") next.semester = currentSemester(next.batch_start_year, next.degree, meta);
-    setForm(next);
+  const setCohort = (i, k, v) => {
+    const cohorts = form.cohorts.map((c, j) => {
+      if (j !== i) return c;
+      const next = { ...c, [k]: k === "batch_start_year" || k === "semester" ? Number(v) : v };
+      if (k === "batch_start_year" || k === "degree") next.semester = currentSemester(next.batch_start_year, next.degree, meta);
+      return next;
+    });
+    setForm({ ...form, cohorts });
   };
-  const nowSem = currentSemester(form.batch_start_year, form.degree, meta);
+  const addCohort = () => setForm({ ...form, cohorts: [...form.cohorts, newCohort(meta, form.cohorts[form.cohorts.length - 1])] });
+  const removeCohort = (i) => setForm({ ...form, cohorts: form.cohorts.filter((_, j) => j !== i) });
 
   async function create(e) {
     e.preventDefault();
     setError("");
     try {
-      await api.post("/classes", { ...form, semester: Number(form.semester) });
+      await api.post("/classes", {
+        subject: form.subject, department: form.department,
+        cohorts: form.cohorts.map(({ key, ...c }) => c)
+      });
       setForm({ ...form, subject: "" });
       load();
     } catch (err) { setError(errMsg(err)); }
   }
 
   async function remove(c) {
-    if (!confirm(`Delete "${c.subject}" and all its attendance records?`)) return;
+    const shared = c.cohorts.length > 1 ? ` It is shared by ${c.cohorts.length} batches and will be deleted for all of them.` : "";
+    if (!confirm(`Delete "${c.subject}" and all its attendance records?${shared}`)) return;
     await api.delete(`/classes/${c.id}`);
     load();
   }
 
   return (
-    <div className="grid items-start gap-6 lg:grid-cols-[340px_1fr]">
+    <div className="grid items-start gap-6 lg:grid-cols-[360px_1fr]">
       <form onSubmit={create} className="panel space-y-4 lg:sticky lg:top-20">
-        <div><h2 className="text-lg font-bold">Create a class</h2><p className="text-xs text-ink/60">Students of the same batch, degree, department and section are added automatically.</p></div>
+        <div><h2 className="text-lg font-bold">Create a class</h2>
+          <p className="text-xs text-ink/60">Add more than one batch when they study this subject together. All batches must be from the same department.</p></div>
         <div><label className="label">Subject</label>
-          <input className="input" required placeholder="Data Structures" value={form.subject} onChange={change("subject")} /></div>
-        <div className="grid grid-cols-2 gap-3">
-          <div><label className="label">Batch start year</label>
-            <select className="input" value={form.batch_start_year} onChange={change("batch_start_year")}>
-              {startYearOptions().map((y) => <option key={y} value={y}>{y}</option>)}
-            </select>
-          </div>
-          <div><label className="label">Degree</label>
-            <select className="input" value={form.degree} onChange={change("degree")}>
-              {Object.keys(meta.degrees).map((d) => <option key={d} value={d}>{d}</option>)}
-            </select>
-          </div>
-        </div>
-
-        {nowSem > 0 ? <p className="alert-ok -mt-1 text-xs">Batch {batchLabel(form.batch_start_year, form.degree, meta)} is in semester {nowSem} right now.</p> : <p className=" text-red-600 -mt-1 text-xs">Invalid Batch Start year or Degree.</p> }
-
+          <input className="input" required placeholder="Data Structures" value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} /></div>
         <div><label className="label">Department</label>
-          <select className="input" required value={form.department} onChange={change("department")}>
+          <select className="input" required value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })}>
             <option value="">Select department</option>
             {meta.departments.map((d) => <option key={d} value={d}>{d}</option>)}</select></div>
-        <div className="grid grid-cols-2 gap-3">
-          <div><label className="label">Semester</label>
-            <select className="input" value={form.semester} onChange={change("semester")}>
-              {Array.from({ length: totalSemesters(form.degree, meta) }, (_, i) => i + 1).map((n) => <option key={n} value={n}>Semester {n}</option>)}</select></div>
-          <div><label className="label">Section</label>
-            <select className="input" required value={form.section} onChange={change("section")}>
-              <option value="">Select</option>
-              {meta.sections.map((s) => <option key={s} value={s}>{s}</option>)}</select></div>
-        </div>
+
+        {form.cohorts.map((c, i) => (
+          <div key={c.key} className="space-y-3 rounded-lg border border-ink/10 bg-field/60 p-3">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-bold">Batch {i + 1}</p>
+              {form.cohorts.length > 1 && <button type="button" className="text-xs text-red-700 underline" onClick={() => removeCohort(i)}>Remove</button>}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className="label">Batch start year</label>
+                <select className="input" value={c.batch_start_year} onChange={(e) => setCohort(i, "batch_start_year", e.target.value)}>
+                  {startYearOptions().map((y) => <option key={y} value={y}>{y}</option>)}</select></div>
+              <div><label className="label">Degree</label>
+                <select className="input" value={c.degree} onChange={(e) => setCohort(i, "degree", e.target.value)}>
+                  {Object.keys(meta.degrees).map((d) => <option key={d} value={d}>{d}</option>)}</select></div>
+            </div>
+            <p className="text-xs text-ink/60">Batch {batchLabel(c.batch_start_year, c.degree, meta)} is in semester {currentSemester(c.batch_start_year, c.degree, meta)} now.</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className="label">Semester</label>
+                <select className="input" value={c.semester} onChange={(e) => setCohort(i, "semester", e.target.value)}>
+                  {Array.from({ length: totalSemesters(c.degree, meta) }, (_, n) => n + 1).map((n) => <option key={n} value={n}>Semester {n}</option>)}</select></div>
+              <div><label className="label">Section</label>
+                <select className="input" required value={c.section} onChange={(e) => setCohort(i, "section", e.target.value)}>
+                  <option value="">Select</option>
+                  {meta.sections.map((s) => <option key={s} value={s}>{s}</option>)}</select></div>
+            </div>
+          </div>))}
+
+        {form.cohorts.length < 8 && <button type="button" className="btn-ghost w-full" onClick={addCohort}>+ Add another batch</button>}
         {error && <p role="alert" className="alert-err">{error}</p>}
-        <button disabled={nowSem<=0} className="btn-primary w-full">Create class</button>
+        <button className="btn-primary w-full">Create class</button>
       </form>
 
       <section>
         <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
           <div><h2 className="text-xl font-bold">Your classes</h2>
-            <p className="text-sm text-ink/60">Grouped by batch, then semester.</p></div>
+            <p className="text-sm text-ink/60">Grouped by batch, then semester. Shared classes show under every batch.</p></div>
           {classes.length > 0 && <div className="flex gap-2"><span className="badge-brand">{classes.length} classes</span><span className="badge">{groups.length} batches</span></div>}
         </div>
 
@@ -116,13 +132,13 @@ export default function TeacherDashboard() {
 
         <div className="space-y-5">
           {groups.map((g) => (
-            <details key={g.key} open className="panel group p-0">
+            <details key={g.key} open className="panel p-0">
               <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-t-xl bg-ink px-5 py-3 text-white">
                 <div className="flex items-center gap-3">
                   <span className="text-lg font-bold">Batch {g.label}</span>
                   <span className="rounded-full bg-white/15 px-2.5 py-0.5 text-xs font-medium">{g.degree}</span>
                 </div>
-                <span className="text-sm text-white/70">{g.count} {g.count === 1 ? "class" : "classes"}</span>
+                <span className="text-sm text-white/70">{g.ids.size} {g.ids.size === 1 ? "class" : "classes"}</span>
               </summary>
               <div className="space-y-5 p-5">
                 {g.sems.map(([sem, list]) => (
@@ -133,18 +149,22 @@ export default function TeacherDashboard() {
                       <span className="h-px flex-1 bg-ink/10" />
                     </div>
                     <ul className="space-y-2">
-                      {list.map((c) => (
-                        <li key={c.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-ink/10 bg-field/60 p-3">
-                          <div>
-                            <p className="font-semibold">{c.subject}</p>
-                            <div className="mt-1 flex flex-wrap gap-1.5"><span className="badge">{c.department}</span><span className="badge">Section {c.section}</span></div>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            <Link to={`/teacher/classes/${c.id}/take`} className="btn-primary">Take attendance</Link>
-                            <Link to={`/teacher/classes/${c.id}/attendance`} className="btn-ghost">View</Link>
-                            <button onClick={() => remove(c)} className="btn-ghost text-red-700" aria-label={`Delete ${c.subject}`}>Delete</button>
-                          </div>
-                        </li>))}
+                      {list.map(({ cls, cohort }) => {
+                        const others = cls.cohorts.filter((k) => k.id !== cohort.id);
+                        return (
+                          <li key={cls.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-ink/10 bg-field/60 p-3">
+                            <div>
+                              <p className="font-semibold">{cls.subject}</p>
+                              <div className="mt-1 flex flex-wrap gap-1.5"><span className="badge">{cls.department}</span><span className="badge">Section {cohort.section}</span></div>
+                              {others.length > 0 && <p className="mt-1.5 text-xs text-ink/60">Shared with: {others.map((k) => `${k.degree} ${k.batch_label} (Sem ${k.semester}, Sec ${k.section})`).join("; ")}</p>}
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <Link to={`/teacher/classes/${cls.id}/take`} className="btn-primary">Take attendance</Link>
+                              <Link to={`/teacher/classes/${cls.id}/attendance`} className="btn-ghost">View</Link>
+                              <button onClick={() => remove(cls)} className="btn-ghost text-red-700" aria-label={`Delete ${cls.subject}`}>Delete</button>
+                            </div>
+                          </li>);
+                      })}
                     </ul>
                   </div>))}
               </div>

@@ -8,7 +8,7 @@ const link = ({ isActive }) =>
 export default function Layout({ children }) {
   const { user, logout } = useAuth();
   const nav = useNavigate();
-  const home = user?.role === "teacher" ? "/teacher" : "/student/attendance";
+  const home = user?.role === "teacher" ? "/teacher" : user?.role === "admin" ? "/admin" : "/student/attendance";
   const initials = (user?.name || "?").split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase();
 
   return (
@@ -18,10 +18,11 @@ export default function Layout({ children }) {
           <div className="flex items-center gap-4">
             <Link to={home} className="flex items-center gap-2 text-white">
               <Logo className="h-7 w-7 text-emerald-300" />
-              <span className="text-lg font-bold tracking-tight">FaceMark</span>
+              <span className="text-lg font-bold tracking-tight">Face Attendance</span>
             </Link>
             <nav className="hidden gap-1 sm:flex">
               {user?.role === "teacher" && <NavLink to="/teacher" className={link}>My classes</NavLink>}
+              {user?.role === "admin" && <NavLink to="/admin" className={link}>Students</NavLink>}
               {user?.role === "student" && (
                 <>
                   <NavLink to="/student/attendance" className={link}>My attendance</NavLink>

@@ -16,9 +16,9 @@ export default function ClassAttendance() {
 
   return (
     <div>
-      <Link to="/teacher" className="text-sm text-brand underline"><button className="p-1 px-1.5 bg-emerald-300 rounded-2xl">Back to classes</button></Link>
-      <h1 className="mb-1 mt-2 text-2xl font-bold">{data.class.subject} (Semester {data.class.semester})</h1>
-      <p className="mb-1 text-sm text-ink/70">{data.class.name}</p>
+      <Link to="/teacher" className="text-sm text-brand underline">Back to classes</Link>
+      <h1 className="mb-1 mt-2 text-2xl font-bold">{data.class.subject}</h1>
+      <p className="mb-1 text-sm text-ink/70">{data.class.department}: {data.class.label}</p>
       <p className="mb-5 text-sm text-ink/70">Today and the previous 4 days. A dash means no attendance was submitted that day.</p>
       {data.students.length === 0 ? (
         <p className="panel text-sm text-ink/70">No attendance has been submitted in the last 5 days.</p>
@@ -34,7 +34,7 @@ export default function ClassAttendance() {
             <tbody>
               {data.students.map((s) => (
                 <tr key={s.id} className="border-t border-ink/10">
-                  <td className="p-3">{s.roll_number}</td><td className="p-3">{s.name}</td>
+                  <td className="p-3">{s.roll_number}</td><td className="p-3">{s.name}<span className="block text-xs text-ink/50">{s.degree} · {s.batch_label}</span></td>
                   {data.dates.map((d) => {
                     const m = s.marks[d];
                     return <td key={d} className={`p-3 text-center font-semibold ${m === true ? "text-brand" : m === false ? "text-red-700" : "text-ink/30"}`}>{m === true ? "P" : m === false ? "A" : "–"}</td>;

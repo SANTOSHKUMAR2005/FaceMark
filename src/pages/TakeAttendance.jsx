@@ -71,9 +71,9 @@ export default function TakeAttendance() {
 
   return (
     <div>
-      <Link to="/teacher" className="text-sm text-brand underline"><button className="p-1 px-1.5 bg-emerald-300 rounded-2xl">Back to classes</button></Link>
-      <h1 className="mb-1 mt-2 text-2xl font-bold">{info ? `${info.subject} (Semester ${info.semester})` : "Take attendance"}</h1>
-      {info && <p className="mb-1 text-sm text-ink/70">{info.name}</p>}
+      <Link to="/teacher" className="text-sm text-brand underline">Back to classes</Link>
+      <h1 className="mb-1 mt-2 text-2xl font-bold">{info ? info.subject : "Take attendance"}</h1>
+      {info && <p className="mb-1 text-sm text-ink/70">{info.department}: {info.label}</p>}
       <p className="mb-5 text-sm text-ink/70">Recognized students are marked present in a draft. Nothing is saved until you press Submit attendance.</p>
       {error && <p role="alert" className="alert-err mb-4">{error}</p>}
       {cam.error && <p role="alert" className="alert-err mb-4">{cam.error}</p>}
@@ -113,7 +113,7 @@ export default function TakeAttendance() {
               {students.map((s) => (
                 <li key={s.id}>
                   <button onClick={() => toggle(s.id)} className="flex w-full items-center justify-between py-2 text-left text-sm">
-                    <span>{s.name} <span className="text-ink/50">({s.roll_number})</span></span>
+                    <span>{s.name} <span className="text-ink/50">({s.roll_number})</span><span className="block text-xs text-ink/50">{s.degree} · {s.batch_label}</span></span>
                     <span className={present.has(s.id) ? "font-semibold text-brand" : "text-ink/40"}>{present.has(s.id) ? "Present" : "Absent"}</span>
                   </button>
                 </li>
